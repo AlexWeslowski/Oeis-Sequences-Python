@@ -49,7 +49,10 @@ class Packages:
         self.package_hash[package_name] = dist_name
     
     def install(self):
+        print("")
+        print("Checking installed packages")
         print(self.package_list)
+        print("")
         for package_name in self.package_list:
             try:
                 #is_git = package_name.startswith("git+") or package_name.find("https://") > 0
@@ -84,15 +87,15 @@ class Packages:
 
 
 p = Packages()
-#package_list = "multiprocessing, math, numpy, numba, sympy, sparse, itertools, functools, operator, primefac, bitarray, numbers, operator, fractions, random, sqlite3, filelock, io, gzip, threading, queue, time, psutil, os, pathlib, platformdirs, traceback, datetime, py-cpuinfo".split(", ")
+#package_list = "multiprocessing, math, numpy, numba, sympy, sparse, itertools, functools, operator, primefac, bitarray, numbers, operator, fractions, random, sqlite3, filelock, io, gzip, threading, queue, signal, time, psutil, os, pathlib, platformdirs, traceback, datetime, py-cpuinfo".split(", ")
 #p.add("git+https://github.com/AlexWeslowski/Divisors.git")
 p.map("divisors", "git+https://github.com/AlexWeslowski/Divisors.git")
-#p.install()
+p.install()
 #print(f"package_list, len = {len(p.package_list)}")
 #print(p.package_list)
 
 
-import multiprocessing, math, numpy, sparse, itertools, functools, operator, primefac, bitarray, numbers, operator, fractions, random, sqlite3, filelock, io, gzip, threading, queue, time, psutil, os, pathlib, platformdirs, traceback, datetime, cpuinfo
+import multiprocessing, math, numpy, sparse, itertools, functools, operator, primefac, bitarray, numbers, operator, fractions, random, sqlite3, filelock, io, gzip, threading, queue, signal, time, psutil, os, pathlib, platformdirs, traceback, datetime, cpuinfo
 import numba, numba.experimental, numba.extending, numba.typed, numba.types
 import sympy, sympy.external.gmpy
 from multiprocessing import Process
@@ -111,24 +114,27 @@ else:
     aryprimes = bitarray.bitarray(ap+1)
     aryprimes.setall(0)
 
-def fill_primes(ap):
+def fill_primes(ap1):
     global verbose
     global bln_numba
     global aryprimes
-    if verbose: print(f"fill_primes({ap:,})")
+    log2 = math.log(ap1, 2)
+    ap2 = 2**math.ceil(log2) + 2**math.floor(log2)
+    if verbose: print(f"fill_primes({ap1:,})")
     if bln_numba:
-        aryprimes = numpy.array([False]*(ap+1), dtype=bool)
+        aryprimes = numpy.array([False]*(ap2+1), dtype=bool)
     else:
-        aryprimes = bitarray.bitarray(ap+1)
+        aryprimes = bitarray.bitarray(ap2+1)
         aryprimes.setall(0)
     try:
         import primesieve
-        for p in primesieve.primes(ap+1):
+        for p in primesieve.primes(ap2+1):
             aryprimes[p] = True
     except ModuleNotFoundError as mnfe:
-        for p in sympy.sieve.primerange(ap+1):
+        for p in sympy.sieve.primerange(ap2+1):
             aryprimes[p] = True
         pass
+    if verbose: print(f"fill_primes({ap1:,}) len(aryprimes) = {len(aryprimes)}")
 
 # 2**28 ~ 10**8.43
 # 2**33 ~ 10**9.93
@@ -486,7 +492,7 @@ def calc_density1(i, a):
     global max_sum
     global total_calc_density
     if verbose: print(f"calc_density1(i={i}, a={a}), bln_count={bln_count}, bln_numba={bln_numba}")
-    if i > len(aryprimes) and i <= div.size():
+    if i > len(aryprimes):
         fill_primes(i + 2)
     if bln_count:
         if len(a) in hsh_count_all:
@@ -753,21 +759,28 @@ def factorizations_outer(n, bln_remove_gt_half=True):
     return ary_tpl
 
 
-def factors_loop(q_in, q_out, bbreak):
+def factors_loop(th, q_in, q_out, q_thread_max, istepby, bbreak):
     global verbose
     global aryprimes
     global istarted
+    global keyboard_interrupt_event
     global bln_factors_loop
     global setfractions
     global max_sum
+    if verbose:
+        print(f"factors_loop() th = {th}")
+        print(f"current_thread().name = {threading.current_thread().name}")
+        print(f"get_ident() = {threading.get_ident()}")
+        print(f"get_native_id() = {threading.get_native_id()}")
     hshfractions = [hash(frac) for frac in setfractions]
     max_sum = Fraction(1, 1)
     bstarted = False
     bln_factors_loop = True
-    while bln_factors_loop:
+    while bln_factors_loop and not keyboard_interrupt_event.is_set():
         tpl = q_in.get()
         if tpl is None:
             q_out.put(None)
+            q_in.task_done()
             break
         #if False and ((tpl[0] <= 39443712 and tpl[1] >= 39443712) or (tpl[0] <= 39621120 and tpl[1] >= 39621120)):
         #    verbose = True
@@ -778,9 +791,9 @@ def factors_loop(q_in, q_out, bbreak):
         if not bstarted:
             bstarted = True
             istarted += 1
-        if tpl[1] > len(aryprimes) and tpl[1] <= div.size():
+        if tpl[1] > len(aryprimes):
             fill_primes(tpl[1] + 2)
-        for i in range(tpl[0], tpl[1]):
+        for i in range(tpl[0], tpl[1], istepby):
             if aryprimes[i] or (i % 2 == 0 and aryprimes[i//2]) or (i % 3 == 0 and aryprimes[i//3]):
                 continue
             #verbose = i in [39443712, 39621120]
@@ -809,6 +822,8 @@ def factors_loop(q_in, q_out, bbreak):
                 if verbose:
                     for f2 in fact2:
                         print(f"factors_loop() {f2[1]}\t\t{f2[2]:,}\t\t{f2[3]}\t\t{len(f2[3])}")
+        q_in.task_done()
+        q_thread_max.put((th, tpl[1]-1))
 
 
 def print_rows():
@@ -839,15 +854,16 @@ conn.commit()
 conn.close()
 t0, i0, i1, i2
 """
-def all_factors_loop(q_in, q_out):
+def all_factors_loop(th, q_in, q_out, q_thread_max, istepby):
     global verbose
     global max_denominator
     global aryprimes
     global istarted
+    global keyboard_interrupt_event
     global bln_all_factors_loop
     bstarted = False
     bln_all_factors_loop = True
-    while bln_all_factors_loop:
+    while bln_all_factors_loop and not keyboard_interrupt_event.is_set():
         tpl = q_in.get()
         if verbose: print(f"all_factors_loop() tpl = {tpl}")
         if not bstarted:
@@ -855,6 +871,7 @@ def all_factors_loop(q_in, q_out):
             istarted += 1
         if tpl is None:
             q_out.put(None)
+            q_in.task_done()
             break
         if verbose:
             print("# ")
@@ -864,7 +881,7 @@ def all_factors_loop(q_in, q_out):
             print("# ")
         if tpl[1] > len(aryprimes) and tpl[1] <= div.size():
             fill_primes(tpl[1] + 2)
-        for i in range(tpl[0], tpl[1]):
+        for i in range(tpl[0], tpl[1], istepby):
             if aryprimes[i]:
                 if i <= max_denominator:
                     q_out.put([(i, Fraction(1, i), i, [i,])])
@@ -885,8 +902,9 @@ def all_factors_loop(q_in, q_out):
                     for f2 in fact2:
                         print(f"all_factors_loop() {f2[1]}\t\t{f2[2]:,}\t\t{f2[3]}\t\t{len(f2[3])}")
             if verbose: print(f"all_factors_loop() i = {i}, lineno = {sys._getframe(0).f_lineno}")
+        q_in.task_done()
         if verbose: print(f"all_factors_loop() i = {i}, lineno = {sys._getframe(0).f_lineno}")
-
+        q_thread_max.put((th, tpl[1]-1))
 
 # sequence_th.ary_factors_loop([3293136,])
 # [sequence_th.calc_density(3293136, ary) for ary in sequence.factorizations_outer(3293136, bln_remove_gt_half=False).to_array()]
@@ -970,13 +988,13 @@ def fill_hsh(i):
 
 
 factscache = 72
-linescache = 144
+linescache = 8
 writescache = 2
 #filebuffer = 32768
 filebuffer = 8192
 icompleted = 0
 
-def writer(q_out):
+def writer(q_out, q_thread_max):
     global verbose
     global inumthreads
     global icompleted
@@ -1003,6 +1021,7 @@ def writer(q_out):
     global total_calc_density
     global total_writer
     
+    global keyboard_interrupt_event
     global bln_keyboard_interrupt
     global bln_writer
     bln_writer = True
@@ -1016,6 +1035,7 @@ def writer(q_out):
     bfileclosed = False
     bdataclosed = False
     hsh = {}
+    hshmax = {}
     conn, curs, facts, lines, data = None, None, [], [], []
     f_zip, f_buf, f_txt = None, None, None
     try:
@@ -1043,8 +1063,12 @@ def writer(q_out):
             print(f"writer() factscache = {factscache}, linescache = {linescache}, writescache = {writescache}")
             print(f"writer() directory = {directory}, filename = {filename}")
             print(f"writer() inumthreads = {inumthreads}, icompleted = {icompleted}")
-        while bln_writer:
+        while bln_writer and not keyboard_interrupt_event.is_set():
             fact2 = q_out.get(block=True)
+            while not q_thread_max.empty():
+                ith, imax = q_thread_max.get(block=False)
+                hshmax[ith] = imax
+                q_thread_max.task_done()
             twriter = time.time()
             if bfirst:
                 bfirst = False                
@@ -1060,9 +1084,11 @@ def writer(q_out):
                     dt = (time.time() - t0)/60
                     total_writer += (time.time() - twriter)
                     print(f"{round(dt, 2)} minutes ~ {int(round((i1 - i0)/dt, 0)):,} per min")
+                    q_out.task_done()
                     break
                 else:
                     if bverbose: print(f"writer() fact2 is None")
+                    q_out.task_done()
                     continue
             if i0 == 0:
                 #print(f"i0 = {i0}, fact2 = {fact2}")
@@ -1079,23 +1105,22 @@ def writer(q_out):
             ifacts += len(fact2)
             facts.extend(fact2)
             if bverbose: print(f"writer() ilines = {ilines}")
-            if ifacts >= factscache:
-                sfacts = sorted(facts, key=lambda f2: f2[2])
-                for f2 in sfacts[:factscache//2]:
-                    if str(f2[1]) not in hsh:
-                        hsh[str(f2[1])] = [f2[2],]
-                    else:
-                        hsh[str(f2[1])].append(f2[2])
-                    print(f"{f2[1]}\t\t{f2[2]:,}\t\t{f2[3]}\t\t{len(f2[3])}")
-                    if bfile:
-                        lines.append(f"{f2[1]}\t{f2[2]:,}\t{f2[3]}\t{len(f2[3])}\n")
-                    if bdata:
-                        # data.append((f2[1].numerator, f2[1].denominator, f2[2], str(f2[3]), len(f2[3])))
-                        _ = curs.execute("INSERT INTO sequence (num, den, ord, len) VALUES (?, ?, ?, ?);", (f2[1].numerator, f2[1].denominator, f2[2], len(f2[3])))
-                        seq_id = curs.lastrowid
-                        _ = curs.executemany("INSERT INTO array (seq_id, a) VALUES (?, ?);", [(seq_id, x) for x in f2[3]])                    
-                ifacts = 0
-                facts = sfacts[factscache//2:]
+            iminmax = min(hshmax.values()) if len(hshmax) >= inumthreads else 0
+            for f2 in sorted([f2 for f2 in facts if f2[2] <= iminmax], key=lambda f2: f2[2]):
+                if str(f2[1]) not in hsh:
+                    hsh[str(f2[1])] = [f2[2],]
+                else:
+                    hsh[str(f2[1])].append(f2[2])
+                print(f"{f2[1]}\t\t{f2[2]:,}\t\t{f2[3]}\t\t{len(f2[3])}")
+                if bfile:
+                    lines.append(f"{f2[1]}\t{f2[2]:,}\t{f2[3]}\t{len(f2[3])}\n")
+                if bdata:
+                    # data.append((f2[1].numerator, f2[1].denominator, f2[2], str(f2[3]), len(f2[3])))
+                    _ = curs.execute("INSERT INTO sequence (num, den, ord, len) VALUES (?, ?, ?, ?);", (f2[1].numerator, f2[1].denominator, f2[2], len(f2[3])))
+                    seq_id = curs.lastrowid
+                    _ = curs.executemany("INSERT INTO array (seq_id, a) VALUES (?, ?);", [(seq_id, x) for x in f2[3]])                    
+            ifacts = 0
+            facts = [f2 for f2 in facts if f2[2] > iminmax]
             if ilines >= linescache:
                 iwrites += 1
                 if bverbose:
@@ -1165,7 +1190,7 @@ def writer(q_out):
                 facts = []
             if len(hsh) > 0:
                 for k, v in hsh.items():
-                    print(f"{k}: {v}")
+                    print(f"{k}\t{v}")
                 hsh = {}
             with lock:
                 if bfile:
@@ -1221,7 +1246,7 @@ def writer(q_out):
             print(f"line = {sys._getframe(0).f_lineno}, ilines = {ilines}")
             print(f"line = {sys._getframe(0).f_lineno}, len(lines) = {len(lines)}")
             print(f"line = {sys._getframe(0).f_lineno}, len(hsh) = {len(hsh)}")
-        if bln_keyboard_interrupt or icompleted == inumthreads:
+        if bln_keyboard_interrupt or keyboard_interrupt_event.is_set() or icompleted == inumthreads:
             if len(facts) > 0:
                 for f2 in sorted(facts, key=lambda x: x[2]):
                     if str(f2[1]) not in hsh:
@@ -1278,8 +1303,21 @@ def writer(q_out):
             #print(f"# i1 - i0 = {i1 - i0}")
             #print(f"# itotal = {itotal} ~ {int(round(itotal/(dt/60), 0)):,} per min")
             print(f"# {round(dt/60, 2)} mins ({round(dt/60/60, 2)} hrs) ~ {int(round((i1 - i0)/(dt/60), 0)):,} per min")
-
-
+            print("")
+            print(f"# bln_keyboard_interrupt = {bln_keyboard_interrupt}")
+            print(f"# keyboard_interrupt_event.is_set() = {keyboard_interrupt_event.is_set()}")
+            print(f"# bln_factors_loop = {bln_factors_loop}")
+            print(f"# bln_all_factors_loop = {bln_all_factors_loop}")
+            print(f"# bln_writer = {bln_writer}")
+            print("")
+            print(f"# q_in.unfinished_tasks = {q_in.unfinished_tasks}")
+            print(f"# q_out.unfinished_tasks = {q_out.unfinished_tasks}")
+            print(f"# q_thread_max.unfinished_tasks = {q_thread_max.unfinished_tasks}")
+            clear_queue(q_in)
+            clear_queue(q_out)
+            clear_queue(q_thread_max)
+            
+            
 t0 = 0
 total_factorizations_outer = 0.0
 total_factor_combinations = 0.0
@@ -1291,6 +1329,7 @@ istarted = 0
 inumthreads = 1
 q_in = queue.Queue()
 q_out = queue.Queue()
+q_thread_max = queue.Queue()
 lock = threading.Lock()
 
 def directory_path(filename):
@@ -1353,23 +1392,66 @@ def directory_path(filename):
     return dir_path
 
 
+keyboard_interrupt_event = threading.Event()
 bln_factors_loop = False
 bln_all_factors_loop = False
 bln_writer = False
 bln_keyboard_interrupt = False
+bln_sys_exit = False
 
+def clear_queue(q):
+    with q.mutex:
+        if q.unfinished_tasks > 0:
+            q.queue.clear()
+            q.unfinished_tasks = 0
+            q.all_tasks_done.notify_all()
+
+def graceful_exit(signum, frame):
+    global keyboard_interrupt_event
+    global bln_keyboard_interrupt
+    global bln_factors_loop
+    global bln_all_factors_loop
+    global bln_writer
+    global bln_sys_exit
+    global q_in
+    global q_out
+    global q_thread_max
+    
+    keyboard_interrupt_event.set()
+    bln_keyboard_interrupt = True
+    bln_factors_loop = False
+    bln_all_factors_loop = False
+    bln_writer = False
+    
+    clear_queue(q_in)
+    clear_queue(q_out)
+    clear_queue(q_thread_max)
+        
+    if bln_sys_exit:
+        sys.exit(0)
+
+
+if hasattr(signal, 'SIGTERM'):
+    signal.signal(signal.SIGTERM, graceful_exit)
+if hasattr(signal, 'SIGINT'):
+    signal.signal(signal.SIGINT, graceful_exit)
+if hasattr(signal, 'SIGBREAK'):
+    signal.signal(signal.SIGBREAK, graceful_exit)
 
 # 
 # main loop 
 # 
-# i7-1165G7 @ 2.80GHz #   1,145,760 #  14.22 mins (0.24 hrs) 67,117 per min
-# i7-1165G7 @ 2.80GHz #   1,048,576 #  12.40 mins (0.21 hrs) 76,968 per min
-# i7-1165G7 @ 2.80GHz #   8,388,608 # 335.85 mins (5.60 hrs) 24,102 per min
-#                         8,388,608 # 139.40 mins (2.30 hrs)
-#                       268,380,000
+# i7-1165G7 @ 2.80GHz, Python Python 3.14.2  #      65,536 #   1.52 mins (0.03 hrs) 42,913 per min
+# i7-1165G7 @ 2.80GHz, Python Python 3.13.11 #   1,145,760 #  14.22 mins (0.24 hrs) 67,117 per min
+# i7-1165G7 @ 2.80GHz, Python Python 3.13.11 #   1,048,576 #  12.40 mins (0.21 hrs) 76,968 per min
+# i7-1165G7 @ 2.80GHz, Python Python 3.13.11 #   8,388,608 # 335.85 mins (5.60 hrs) 24,102 per min
+# i7-1165G7 @ 2.80GHz, Python Python 3.14.2  #   8,388,608 # 189.24 mins (3.15 hrs) 44,278 per min
+#                                                8,388,608 # 139.40 mins (2.30 hrs)
+#                                              268,380,000
 # 
 # python.exe "E:\Python\Sequence\sequence_th.py" 1 [(1,2)] 2 1048576
 # python.exe "E:\Python\Sequence\sequence_th.py" 1 [(1,2)] 2 8388608
+# python.exe "%USERPROFILE%\Documents\Python\Sequence\sequence_th.py" 2 [(1,2)] 2 8388608
 # python.exe "E:\Python\Sequence\sequence_th.py" 1 [(1,2)] 8388608 16777216
 # 
 def main():
@@ -1385,10 +1467,12 @@ def main():
     global inumthreads
     global istarted
     global icompleted
+    global keyboard_interrupt_event
+    global bln_keyboard_interrupt
     global bln_factors_loop
     global bln_all_factors_loop
     global bln_writer
-    global bln_keyboard_interrupt
+    global bln_sys_exit
     global factscache
     global linescache
     
@@ -1398,6 +1482,12 @@ def main():
     print(processor_name)
     print("")
     args = sys.argv[1:]
+    
+    if "--v" in args or "--verbose" in args:
+        verbose = True
+    
+    if "--n" in args or "--numba" in args:
+        bln_numba = True
     
     if args[0].lower() == "debug":
         # import sqlite3
@@ -1416,6 +1506,9 @@ def main():
     ary = eval(args[1])
     strary = str(ary)[1:-1].replace("),(", ") (").replace(", ", ",")
     setfractions = frozenset([Fraction(tpl[0], tpl[1]) for tpl in ary])
+    istepby = 1
+    if len(setfractions) == 1 and setfractions[0].numerator == 1 and setfractions[0].denominator == 2:
+        istepby = 2
     filename = f"sequence {strary}.txt"
     directory = directory_path(filename)
     
@@ -1431,7 +1524,7 @@ def main():
     if i0 < 2:
         i0 = 2
     
-    print(f"main() starting process with inumthreads={inumthreads}, setfractions={ary}, istart={i0}, ifinish={i1}")
+    print(f"main() starting process with inumthreads={inumthreads}, setfractions={ary}, istart={i0}, ifinish={i1}, verbose={verbose}")
     print(f"main() {datetime.datetime.now().strftime('%I:%M:%S %p')}")
 
     # inumthreads, i0, i1 = 2, 2, 32768
@@ -1443,6 +1536,9 @@ def main():
     i, t0 = i0, time.time()
     
     if True:
+        bln_factors_daemon = True
+        bln_writer_daemon = False
+        
         if i > 12:
             fill_hsh(i)
         
@@ -1455,15 +1551,21 @@ def main():
             for t in range(0, inumthreads):
                 a = i + t * imult
                 b = i + (t + 1) * imult
+                if istepby > 1:
+                    while a % istepby > 0:
+                        a += 1
+                    while b % istepby > 0:
+                        b += 1
                 if b >= i1:
-                    b = i1 + 2
-                # print(f"q_in.put(({a}, {b}))")
+                    b = i1 + istepby
+                if verbose: 
+                    print(f"q_in.put(({a}, {b}))")
                 q_in.put((a, b))
             i += inumthreads * imult
         for t in range(0, inumthreads):
-            # th[t] = threading.Thread(target=all_factors_loop, args=(q_in, q_out))
+            # th[t] = threading.Thread(target=all_factors_loop, args=(t, q_in, q_out, q_thread_max, istepby), daemon=bln_factors_daemon)
             # factors_loop(t0, i0, i1, i2, bbreak)
-            th[t] = threading.Thread(target=factors_loop, args=(q_in, q_out, False))
+            th[t] = threading.Thread(target=factors_loop, args=(t, q_in, q_out, q_thread_max, istepby, False), daemon=bln_factors_daemon)
             th[t].start()
         for t in range(0, inumthreads):
             q_in.put(None)
@@ -1473,31 +1575,28 @@ def main():
             print(f"main() istarted = {istarted}, inumthreads = {inumthreads}")
         print("")
         
-        writer_th = threading.Thread(target=writer, args=(q_out,))
+        writer_th = threading.Thread(target=writer, args=(q_out,q_thread_max), daemon=bln_writer_daemon)
         writer_th.start()
         try:
             while icompleted < inumthreads:
                 time.sleep(2)
         except KeyboardInterrupt:
-            bln_keyboard_interrupt = True
-            bln_factors_loop = False
-            bln_all_factors_loop = False
-            bln_writer = False
+            graceful_exit()
         try:
             for t in range(0, inumthreads):
                 th[t].join()
             writer_th.join()
         except KeyboardInterrupt:
-            pass
+            graceful_exit()
     
     if False:
         while i < i1:
             i += inumthreads * imult
             pr = [object(),] * inumcores
             for p in range(0, inumthreads):
-                pr[p] = Process(target=factors_loop, args=(q_in, q_out, False))
+                pr[p] = Process(target=factors_loop, args=(p, q_in, q_out, False))
                 #all_factors_loop(time.time(), 2, 2, 65536)
-                #pr[p] = Process(target=all_factors_loop, args=(q_in, q_out))
+                #pr[p] = Process(target=all_factors_loop, args=(p, q_in, q_out))
                 pr[p].start()
             writer_pr = Process(target=writer, args=(q_out,))
             writer_pr.start()
