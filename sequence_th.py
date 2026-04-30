@@ -687,7 +687,7 @@ def factorCombinations(n2):
     combinations = ArrayArray(2048, True)
     if bln_cpp:
         combinations = div.Combinations(n)
-        combinations.backtrack(n2, [])
+        combinations.backtrack(n2)
         #combinations = combinations.get_arrayarray()
     elif bln_numba:
         backtrack_numba(n, n2, factors, combinations, small_factor_cache, factor_cache)
@@ -786,8 +786,9 @@ def factors_loop(th, q_in, q_out, q_thread_max, istepby, bbreak):
         #    verbose = True
         #else:
         #    verbose = False
-        if verbose: print(f"factors_loop() tpl = {tpl}")
-        if verbose: print(f"factors_loop() setfractions = {[str(x.numerator) + "/" + str(x.denominator) for x in list(setfractions)]}")
+        if istarted == 0 or verbose: 
+            print(f"factors_loop() th = {th}, tpl = {tpl}, istepby = {istepby}")
+            print(f"factors_loop() setfractions = {[str(x.numerator) + "/" + str(x.denominator) for x in list(setfractions)]}")
         if not bstarted:
             bstarted = True
             istarted += 1
@@ -798,6 +799,11 @@ def factors_loop(th, q_in, q_out, q_thread_max, istepby, bbreak):
                 continue
             #verbose = i in [39443712, 39621120]
             fact2 = []
+            #import sys
+            #sys.path.append("E:\\Python\\Sequence")
+            #import sequence_th as seq
+            #i = 14880
+            #[(density.numerator, density.denominator) for density in [seq.calc_density1(i, f1) for f1 in seq.factorizations_outer(i, bln_remove_gt_half=False)]]
             for f1 in factorizations_outer(i, bln_remove_gt_half=False):
                 if verbose: print(f"factors_loop() i = {i}, f1 = {f1}")
                 frac1 = calc_density1(i, f1)
@@ -822,7 +828,10 @@ def factors_loop(th, q_in, q_out, q_thread_max, istepby, bbreak):
                 if verbose:
                     for f2 in fact2:
                         print(f"factors_loop() {f2[1]}\t\t{f2[2]:,}\t\t{f2[3]}\t\t{len(f2[3])}")
-        q_in.task_done()
+        try:
+            q_in.task_done()
+        except ValueError as ve:
+            pass
         q_thread_max.put((th, tpl[1]-1))
 
 
@@ -902,7 +911,10 @@ def all_factors_loop(th, q_in, q_out, q_thread_max, istepby):
                     for f2 in fact2:
                         print(f"all_factors_loop() {f2[1]}\t\t{f2[2]:,}\t\t{f2[3]}\t\t{len(f2[3])}")
             if verbose: print(f"all_factors_loop() i = {i}, lineno = {sys._getframe(0).f_lineno}")
-        q_in.task_done()
+        try:
+            q_in.task_done()
+        except ValueError as ve:
+            pass
         if verbose: print(f"all_factors_loop() i = {i}, lineno = {sys._getframe(0).f_lineno}")
         q_thread_max.put((th, tpl[1]-1))
 
@@ -1083,7 +1095,7 @@ def writer(q_out, q_thread_max):
                     #print(f"writer() icompleted = {icompleted}, inumthreads = {inumthreads}")
                     dt = (time.time() - t0)/60
                     total_writer += (time.time() - twriter)
-                    print(f"{round(dt, 2)} minutes ~ {int(round((i1 - i0)/dt, 0)):,} per min")
+                    #print(f"{round(dt, 2)} minutes ~ {int(round((i1 - i0)/dt, 0)):,} per min")
                     q_out.task_done()
                     break
                 else:
@@ -1387,7 +1399,7 @@ def directory_path(filename):
         if not exists or not is_readable or not is_writable:
             sys.exit(1)    
         print(f"Selected path '{dir_path}'")
-        print("")
+    print("")
     
     return dir_path
 
@@ -1400,7 +1412,11 @@ bln_keyboard_interrupt = False
 bln_sys_exit = False
 
 def clear_queue(q):
+    global verbose
+    if verbose: print("clear_queue()")
+    
     with q.mutex:
+        if verbose: print(f"clear_queue() q.unfinished_tasks = {q.unfinished_tasks}")
         if q.unfinished_tasks > 0:
             q.queue.clear()
             q.unfinished_tasks = 0
@@ -1416,6 +1432,8 @@ def graceful_exit(signum, frame):
     global q_in
     global q_out
     global q_thread_max
+    global verbose
+    if verbose: print(f"graceful_exit(signum = {signum}, frame = {frame})")
     
     keyboard_interrupt_event.set()
     bln_keyboard_interrupt = True
@@ -1441,18 +1459,18 @@ if hasattr(signal, 'SIGBREAK'):
 # 
 # main loop 
 # 
-# i7-1165G7 @ 2.80GHz, Python Python 3.14.2  #      65,536 #   1.52 mins (0.03 hrs) 42,913 per min
-# i7-1165G7 @ 2.80GHz, Python Python 3.13.11 #   1,145,760 #  14.22 mins (0.24 hrs) 67,117 per min
-# i7-1165G7 @ 2.80GHz, Python Python 3.13.11 #   1,048,576 #  12.40 mins (0.21 hrs) 76,968 per min
-# i7-1165G7 @ 2.80GHz, Python Python 3.13.11 #   8,388,608 # 335.85 mins (5.60 hrs) 24,102 per min
-# i7-1165G7 @ 2.80GHz, Python Python 3.14.2  #   8,388,608 # 189.24 mins (3.15 hrs) 44,278 per min
-#                                                8,388,608 # 139.40 mins (2.30 hrs)
-#                                              268,380,000
+# i7-1165G7 @ 2.80GHz, Python 3.14.2                    #      65,536 #   1.52 mins (0.03 hrs)  42,913 per min
+# i7-1165G7 @ 2.80GHz, Python 3.13.11                   #   1,145,760 #  14.22 mins (0.24 hrs)  67,117 per min
+# i7-1165G7 @ 2.80GHz, Python 3.13.11                   #   1,048,576 #  12.40 mins (0.21 hrs)  76,968 per min
+# i7-1165G7 @ 2.80GHz, Python 3.13.11                   #   8,388,608 # 335.85 mins (5.60 hrs)  24,102 per min
+# i7-1165G7 @ 2.80GHz, Python 3.14.2                    #   8,388,608 # 189.24 mins (3.15 hrs)  44,278 per min
+#                                                           8,388,608 # 139.40 mins (2.30 hrs)
+#  i7-1360P @ 2.20GHz, Python 3.14.2,  bln_numba = True #   8,388,608 #  36.42 mins (0.61 hrs) 222,272 per min
 # 
 # python.exe "E:\Python\Sequence\sequence_th.py" 1 [(1,2)] 2 1048576
-# python.exe "E:\Python\Sequence\sequence_th.py" 1 [(1,2)] 2 8388608
+# python.exe "E:\Python\Sequence\sequence_th.py" 1 [(1,2)] 2 8388608 --verbose
 # python.exe "%USERPROFILE%\Documents\Python\Sequence\sequence_th.py" 2 [(1,2)] 2 8388608
-# python.exe "E:\Python\Sequence\sequence_th.py" 1 [(1,2)] 8388608 16777216
+# python.exe "D:\Python\Sequence\sequence_th.py" 1 [(1,4)] 8388608 134217728
 # 
 def main():
     global verbose
@@ -1478,8 +1496,21 @@ def main():
     
     print(f"Python {sys.version}")
     cpu_info = cpuinfo.get_cpu_info()
-    processor_name = cpu_info.get('brand_raw', 'Unknown Processor')
-    print(processor_name)
+    brand_raw = cpu_info.get('brand_raw', 'Unknown Processor')
+    hz_advertised = cpu_info.get('hz_advertised_friendly', '')
+    hz_actual = cpu_info.get('hz_actual_friendly', '')
+    if brand_raw.find("GHz") == -1:
+        hz_ary = hz_actual.split(" ")
+        if len(hz_ary) > 1:
+            try:
+                hz = round(float(hz_ary[0]), 2)
+                hz_actual = hz_actual.replace(hz_ary[0], f"{hz:.2f}")
+            except ValueError as ve:
+                pass
+        if hz_actual != "":
+            hz_actual = hz_actual.replace(" ", "")
+            brand_raw = f"{brand_raw} @ {hz_actual}"
+    print(brand_raw)
     print("")
     args = sys.argv[1:]
     
@@ -1507,8 +1538,8 @@ def main():
     strary = str(ary)[1:-1].replace("),(", ") (").replace(", ", ",")
     setfractions = frozenset([Fraction(tpl[0], tpl[1]) for tpl in ary])
     istepby = 1
-    if len(setfractions) == 1 and setfractions[0].numerator == 1 and setfractions[0].denominator == 2:
-        istepby = 2
+    if len(setfractions) == 1:
+        istepby = list(setfractions)[0].denominator
     filename = f"sequence {strary}.txt"
     directory = directory_path(filename)
     
