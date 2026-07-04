@@ -1,4 +1,4 @@
-## January 1, 2026
+## July 4, 2026
 
 Integer sequences related to the density of binary finite fields GF(2). 
 
