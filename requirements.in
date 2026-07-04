@@ -1,0 +1,14 @@
+filelock
+pathlib
+numba
+sympy
+divisors
+numpy
+functools
+primefac
+datetime
+bitarray
+psutil
+sparse
+platformdirs
+
